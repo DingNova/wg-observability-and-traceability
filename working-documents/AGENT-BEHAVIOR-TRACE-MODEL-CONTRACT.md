@@ -1,6 +1,6 @@
 # Agent Behavior Trace Model: shared contract
 
-Status: Living working group document (v0.1-draft) - last reviewed 2026-09-15
+Status: Living working group document (v0.2-draft) - last revised 2026-09-16 (revision 2: reader-design feedback on approvals, identity scopes, usage aggregation, and pinned OTel revisions)
 
 This document is the draft shared contract for the Agent Behavior Trace Model workstream. It records which identities and relationships the two agent examples ([Task 2](https://github.com/aaif/wg-observability-and-traceability/issues/40)) should export, how those relationships should be interpreted, and how they map to AAIF terminology and OpenTelemetry. It follows the [execution plan](https://github.com/aaif/wg-observability-and-traceability/pull/48) and is tracked in [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41).
 
@@ -46,6 +46,7 @@ Identity rules:
 1. Identifiers are assigned by the system that owns the entity and are opaque to consumers.
 2. No synthesized fallback identifiers. If a runtime owns no conversation id, the record carries none; it does not carry a new UUID, trace id, or content hash. This mirrors the OTel rule for `gen_ai.conversation.id`.
 3. Records carry the native label and the contract identity together. The mapping replaces nothing; it annotates.
+4. **Identity and correlation keys are scoped.** A key is only meaningful together with the scope of the system (and, where applicable, tenant) that issued it. The same ticket id observed in two services or two tenants denotes two distinct identities; their effects must not be merged. Joins (R1-R6) and receipt deduplication operate only within the same scope. The exported representation of the scope is an open choice (section 9, item 10).
 
 ## 4. Relationships
 
@@ -56,7 +57,7 @@ Identity rules:
 | R3 | Proposed action → Turn | Origin: within which turn the proposal was made. | Reference from the proposal to its turn. |
 | R4 | Approval → Proposed action | Decision: which action a decision concerned. | Reference from the decision to exactly one proposal; present for denials too. |
 | R5 | Tool execution → Proposed action | Realization: which proposal an execution carries out. | Reference from the execution to the proposal (and, where applicable, to the approval it followed). |
-| R6 | External effect ↔ Tool execution | Correlation: which observed change connects to which execution. | Correlation key shared between the receipt and the execution (for example the ticket id returned by the service and by the tool). |
+| R6 | Tool execution → External effect | Correlation: which observed change connects to which execution. One execution may produce multiple effects; the relation is one-to-many. | Correlation key shared between the receipt and the execution (for example the ticket id returned by the service and by the tool), qualified by the issuing scope (identity rule 4). |
 
 Each relationship record carries: the source identity, the target identity, the relationship kind, and how the link was established (span link, attribute reference, causal flag, or external correlation key). Consumers must not reconstruct a relationship that was not exported, except to report it as missing.
 
@@ -76,21 +77,30 @@ Rules for consumers answering the four priority questions from exported records 
 
 **Continuity.** Group turns by conversation identity (R1). Do not group by trace parent, process, or wall-clock proximity. Ordering must not depend only on timestamps or a single parent-child span tree, especially for concurrent, queued, suspended, or resumed work.
 
-**Calls and retries.** A logical model call may contain failed attempts and one success (R2). Reported usage is counted once per logical call. Retries the runtime does not export remain unknown; they are not zero and they are not silently counted.
+**Calls and retries.** A logical model call may contain failed attempts and one success (R2). Reported usage is counted once per logical call. Retries the runtime does not export remain unknown; they are not zero and they are not silently counted. A record may carry per-attempt usage counters, a per-logical-call total, or both; these are different aggregation levels, and a consumer must not sum across them. Without declared aggregation semantics, combining levels yields unknown, not an estimate.
 
-**Approvals.** An approval decision refers to exactly one proposed action (R4). A denial produces no tool execution record; a missing decision record means the decision is unknown - it does not mean the action was unapproved, and it does not mean it was approved. Observed approval is not proof of enforcement.
+**Approvals.** An approval decision refers to exactly one proposed action (R4). Two layers must be kept apart:
+
+- **Expected enforcement is what the decision says:** an approval licenses the action; a denial states that the action must not proceed. It is policy, not observation.
+- **Observed evidence is what the records show.** A reader that observes a tool execution referencing a denied proposal (or a proposal with no decision) must preserve both records and report the inconsistency. The execution is not dropped because a denial "should have prevented" it - the records disagree, and the disagreement is the finding.
+- A denial with no execution observation does not establish enforcement; enforcement is unknown. A missing decision record likewise means the decision is unknown - not unapproved, and not approved. Observed approval is not proof of enforcement.
 
 **Effects.** An external effect correlates to a tool execution through a shared correlation key (R6).
 
 - A missing observation is **unknown**, not zero and not success. A removed ticket-creation receipt makes the answer "creation unconfirmed," not "no ticket was created."
-- A receipt delivered twice is **one** confirmed effect, not two. Consumers deduplicate by correlation key.
+- A receipt delivered twice is **one** confirmed effect, not two. Consumers deduplicate by correlation key **within its issuing scope** (identity rule 4); the same key value under a different service or tenant is a different effect, not a duplicate.
 - Delayed or reordered arrival must not change the answer. Records are interpreted as a set, not as a stream.
-- Conflicting observations (two receipts that disagree) are reported as conflicts, not resolved silently.
+- Conflicting observations (two receipts that disagree, including conflicting receipts sharing one scoped identity) are reported as conflicts and remain visible, not resolved silently.
 - A service-side receipt is correlation evidence, not cryptographic attestation.
 
 ## 7. OpenTelemetry crosswalk
 
-Mapping of contract identities and relationships onto the OTel GenAI semantic conventions. All `gen_ai.*` attributes and spans below are at **Development** status as of this draft; the contract pins what it was drafted against and expects to track changes.
+Mapping of contract identities and relationships onto the OTel GenAI semantic conventions. All `gen_ai.*` attributes and spans below are at **Development** status. The reader mappings claim compatibility with the following pinned source revisions, not with whatever `main` holds at read time:
+
+- `docs/gen-ai/gen-ai-spans.md` at [`be23fcc250f7`](https://github.com/open-telemetry/semantic-conventions-genai/blob/be23fcc250f7/docs/gen-ai/gen-ai-spans.md) (2026-09-16)
+- `docs/gen-ai/gen-ai-agent-spans.md` at [`b06f7a2c840c`](https://github.com/open-telemetry/semantic-conventions-genai/blob/b06f7a2c840c/docs/gen-ai/gen-ai-agent-spans.md) (2026-09-10)
+
+If the conventions change, this crosswalk is re-verified against the new revision and re-pinned through a revision of this document; a reader must not assume compatibility with an unpinned revision.
 
 | Contract concept | OTel mapping | Notes |
 | --- | --- | --- |
@@ -128,6 +138,7 @@ Rules:
 7. **Conversation identity when a runtime owns none.** Whether the contract treats it as mandatory for examples, or conditional as OTel does.
 8. **Usage deduplication across providers.** How usage is counted once when retries span providers or hidden retries are partially visible.
 9. **Second agent/SDK.** Selection affects which native labels and resumption paths the first revision must cover.
+10. **Representation of identity scope.** How the issuing scope of an identity or correlation key (service, tenant) is carried in exported records. The scoping rule itself (identity rule 4) is fixed; the attribute form is open and feeds the Task 9 upstream proposals.
 
 ## 10. Fixture example
 
@@ -148,10 +159,13 @@ Expected answers for the degraded cases:
 - Receipt delivered twice: still one confirmed ticket.
 - Receipt removed: "creation unconfirmed," not "no ticket was created."
 - `M2` failure exported, success missing: the call and its usage are unknown, not zero.
+- A second, different service also returns a ticket id `42`: a distinct effect in its own scope; not merged with the `ticket-42` receipt above, not deduplicated against it.
+- `M2` usage exported both per attempt and as a logical-call total, with no declared aggregation: combined usage is unknown; a consumer must not sum the levels.
+- An execution is observed that references a proposal whose recorded decision is a denial: both records are preserved, the inconsistency is reported, and enforcement is unknown; the execution is not dropped.
 
 ## 11. Versioning and references
 
-- This document is versioned with the workstream: **v0.1-draft**. Changes land through pull requests against [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41); the review window follows the [working methods](../WORKING-METHODS.md) (specifications: at least 2 weeks).
+- This document is versioned with the workstream: **v0.2-draft**. Changes land through pull requests against [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41); the review window follows the [working methods](../WORKING-METHODS.md) (specifications: at least 2 weeks). Revision 2 (2026-09-16) applies reader-design feedback from [#45](https://github.com/aaif/wg-observability-and-traceability/issues/45): enforcement/evidence split in the approval rules, scoped identity namespaces for joins and deduplication, usage aggregation levels, one-to-many effects, pinned OTel source revisions, and new fixture cases for each.
 - [Execution plan](https://github.com/aaif/wg-observability-and-traceability/pull/48) and its nine-task overview; task issues [#39](https://github.com/aaif/wg-observability-and-traceability/issues/39)–[#47](https://github.com/aaif/wg-observability-and-traceability/issues/47).
-- [OTel GenAI semantic conventions: spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md) and [agent spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md), including the [turn-entry discussion](https://github.com/open-telemetry/semantic-conventions-genai/issues/356).
+- [OTel GenAI semantic conventions: spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/be23fcc250f7/docs/gen-ai/gen-ai-spans.md) (pinned at `be23fcc250f7`) and [agent spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/b06f7a2c840c/docs/gen-ai/gen-ai-agent-spans.md) (pinned at `b06f7a2c840c`), including the [turn-entry discussion](https://github.com/open-telemetry/semantic-conventions-genai/issues/356).
 - [AAIF Taxonomy & Landscape workstream](https://github.com/aaif/ws-taxonomy-landscape) and [taxonomy/trace-model crosswalk, issue #10](https://github.com/aaif/wg-observability-and-traceability/issues/10).
