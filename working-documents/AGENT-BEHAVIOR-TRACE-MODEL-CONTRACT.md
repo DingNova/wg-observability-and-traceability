@@ -1,6 +1,6 @@
 # Agent Behavior Trace Model: shared contract
 
-Status: Living working group document (v0.2-draft) - last revised 2026-09-16 (revision 2: reader-design feedback on approvals, identity scopes, usage aggregation, and pinned OTel revisions)
+Status: Living working group document (v0.3-draft) - last revised 2026-09-17 (revision 3: link-method requirement rule, default-via-mapping relaxation, mapping-loss fixture)
 
 This document is the draft shared contract for the Agent Behavior Trace Model workstream. It records which identities and relationships the two agent examples ([Task 2](https://github.com/aaif/wg-observability-and-traceability/issues/40)) should export, how those relationships should be interpreted, and how they map to AAIF terminology and OpenTelemetry. It follows the [execution plan](https://github.com/aaif/wg-observability-and-traceability/pull/48) and is tracked in [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41).
 
@@ -59,7 +59,15 @@ Identity rules:
 | R5 | Tool execution → Proposed action | Realization: which proposal an execution carries out. | Reference from the execution to the proposal (and, where applicable, to the approval it followed). |
 | R6 | Tool execution → External effect | Correlation: which observed change connects to which execution. One execution may produce multiple effects; the relation is one-to-many. | Correlation key shared between the receipt and the execution (for example the ticket id returned by the service and by the tool), qualified by the issuing scope (identity rule 4). |
 
-Each relationship record carries: the source identity, the target identity, the relationship kind, and how the link was established (span link, attribute reference, causal flag, or external correlation key). Consumers must not reconstruct a relationship that was not exported, except to report it as missing.
+Each relationship record carries: the source identity, the target identity, and the relationship kind. The record also carries **how the link was established** - the *method* - drawn from the named set `{span-link, attribute-reference, causal-flag, external-correlation-key}`. Examples may use additional methods, but interpretation rules are defined only for these four.
+
+The method is **required on the record**, with one permitted relaxation: if an exporter is uniform - for example, an instrumentation library that always emits R1 through R5 as attribute references - the example's mapping file may declare a per-example default that covers the relationships where the field is omitted. A consumer resolves the method in this order:
+
+1. The record's own method field, if present and non-empty.
+2. The example's mapping-file default for the same relationship kind, if declared and applicable.
+3. Otherwise: **the relationship is not established** for the purposes of this contract; the consumer reports a mapping loss rather than inferring a method.
+
+Consumers must not reconstruct a relationship that was not exported, except to report it as missing.
 
 ## 5. Turn boundaries
 
@@ -162,10 +170,12 @@ Expected answers for the degraded cases:
 - A second, different service also returns a ticket id `42`: a distinct effect in its own scope; not merged with the `ticket-42` receipt above, not deduplicated against it.
 - `M2` usage exported both per attempt and as a logical-call total, with no declared aggregation: combined usage is unknown; a consumer must not sum the levels.
 - An execution is observed that references a proposal whose recorded decision is a denial: both records are preserved, the inconsistency is reported, and enforcement is unknown; the execution is not dropped.
+- A relationship record carries source, target, and kind but no method field, and the example's mapping file declares no default for that relationship: the relationship is reported as not established (a mapping loss), not silently inferred.
+- The same relationship is exported twice with the same source, target, kind, and method: it is one relationship, not two.
 
 ## 11. Versioning and references
 
-- This document is versioned with the workstream: **v0.2-draft**. Changes land through pull requests against [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41); the review window follows the [working methods](../WORKING-METHODS.md) (specifications: at least 2 weeks). Revision 2 (2026-09-16) applies reader-design feedback from [#45](https://github.com/aaif/wg-observability-and-traceability/issues/45): enforcement/evidence split in the approval rules, scoped identity namespaces for joins and deduplication, usage aggregation levels, one-to-many effects, pinned OTel source revisions, and new fixture cases for each.
+- This document is versioned with the workstream: **v0.3-draft**. Changes land through pull requests against [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41); the review window follows the [working methods](../WORKING-METHODS.md) (specifications: at least 2 weeks). Revision 3 (2026-09-17) tightens §4 to require a link method per relationship record, with a permitted relaxation when the example's mapping file declares a uniform default; absence of both is treated as a mapping loss. Revision 2 (2026-09-16) applied reader-design feedback from [#45](https://github.com/aaif/wg-observability-and-traceability/issues/45): enforcement/evidence split in the approval rules, scoped identity namespaces for joins and deduplication, usage aggregation levels, one-to-many effects, pinned OTel source revisions, and new fixture cases for each.
 - [Execution plan](https://github.com/aaif/wg-observability-and-traceability/pull/48) and its nine-task overview; task issues [#39](https://github.com/aaif/wg-observability-and-traceability/issues/39)–[#47](https://github.com/aaif/wg-observability-and-traceability/issues/47).
 - [OTel GenAI semantic conventions: spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/be23fcc250f7/docs/gen-ai/gen-ai-spans.md) (pinned at `be23fcc250f7`) and [agent spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/b06f7a2c840c/docs/gen-ai/gen-ai-agent-spans.md) (pinned at `b06f7a2c840c`), including the [turn-entry discussion](https://github.com/open-telemetry/semantic-conventions-genai/issues/356).
 - [AAIF Taxonomy & Landscape workstream](https://github.com/aaif/ws-taxonomy-landscape) and [taxonomy/trace-model crosswalk, issue #10](https://github.com/aaif/wg-observability-and-traceability/issues/10).
