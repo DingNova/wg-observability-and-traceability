@@ -1,6 +1,6 @@
 # Agent Behavior Trace Model: shared contract
 
-Status: Living working group document (v0.3-draft) - last revised 2026-09-17 (revision 3: link-method requirement rule, default-via-mapping relaxation, mapping-loss fixture)
+Status: Living working group document (v0.4-draft) - last revised 2026-09-18 (revision 4: unrecognized-method resolution, dual-method duplicate rule, matching fixtures)
 
 This document is the draft shared contract for the Agent Behavior Trace Model workstream. It records which identities and relationships the two agent examples ([Task 2](https://github.com/aaif/wg-observability-and-traceability/issues/40)) should export, how those relationships should be interpreted, and how they map to AAIF terminology and OpenTelemetry. It follows the [execution plan](https://github.com/aaif/wg-observability-and-traceability/pull/48) and is tracked in [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41).
 
@@ -63,9 +63,14 @@ Each relationship record carries: the source identity, the target identity, and 
 
 The method is **required on the record**, with one permitted relaxation: if an exporter is uniform - for example, an instrumentation library that always emits R1 through R5 as attribute references - the example's mapping file may declare a per-example default that covers the relationships where the field is omitted. A consumer resolves the method in this order:
 
-1. The record's own method field, if present and non-empty.
+1. The record's own method field, if it carries one of the four methods defined above.
 2. The example's mapping-file default for the same relationship kind, if declared and applicable.
 3. Otherwise: **the relationship is not established** for the purposes of this contract; the consumer reports a mapping loss rather than inferring a method.
+
+Two boundary cases follow from this order:
+
+- **A present but unrecognized method.** A value outside the four-method set does not satisfy step 1, and the consumer does not fall back to step 2 for it: a present-but-unknown value is not an omitted field. The relationship is reported as not established (a mapping loss), and the loss report preserves the unrecognized value.
+- **The same relationship exported more than once.** Records that share source, target, and kind - including one exported as a span link and another as an attribute reference, the shape the crosswalk in section 7 invites - establish one relationship. The consumer records each exported method as an observed method of that relationship. Divergent methods are not a conflict: the method describes how the link was exported, not which link it is.
 
 Consumers must not reconstruct a relationship that was not exported, except to report it as missing.
 
@@ -172,10 +177,12 @@ Expected answers for the degraded cases:
 - An execution is observed that references a proposal whose recorded decision is a denial: both records are preserved, the inconsistency is reported, and enforcement is unknown; the execution is not dropped.
 - A relationship record carries source, target, and kind but no method field, and the example's mapping file declares no default for that relationship: the relationship is reported as not established (a mapping loss), not silently inferred.
 - The same relationship is exported twice with the same source, target, kind, and method: it is one relationship, not two.
+- A relationship record carries a method outside the four-method set while the example's mapping file declares a default for that kind: the relationship is still not established; the default is not applied, and the unrecognized value is preserved in the mapping-loss report.
+- The same source, target, and kind exported once as a span link and once as an attribute reference: one relationship with two observed methods, not a conflict and not two relationships.
 
 ## 11. Versioning and references
 
-- This document is versioned with the workstream: **v0.3-draft**. Changes land through pull requests against [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41); the review window follows the [working methods](../WORKING-METHODS.md) (specifications: at least 2 weeks). Revision 3 (2026-09-17) tightens §4 to require a link method per relationship record, with a permitted relaxation when the example's mapping file declares a uniform default; absence of both is treated as a mapping loss. Revision 2 (2026-09-16) applied reader-design feedback from [#45](https://github.com/aaif/wg-observability-and-traceability/issues/45): enforcement/evidence split in the approval rules, scoped identity namespaces for joins and deduplication, usage aggregation levels, one-to-many effects, pinned OTel source revisions, and new fixture cases for each.
+- This document is versioned with the workstream: **v0.4-draft**. Changes land through pull requests against [issue #41](https://github.com/aaif/wg-observability-and-traceability/issues/41); the review window follows the [working methods](../WORKING-METHODS.md) (specifications: at least 2 weeks). Revision 4 (2026-09-18) resolves the two boundary cases left open by revision 3: a present but unrecognized method is a mapping loss with no fallback to the mapping-file default, and one relationship exported through multiple methods is a single relationship with multiple observed methods rather than a conflict; matching fixture cases added. Revision 3 (2026-09-17) tightens §4 to require a link method per relationship record, with a permitted relaxation when the example's mapping file declares a uniform default; absence of both is treated as a mapping loss. Revision 2 (2026-09-16) applied reader-design feedback from [#45](https://github.com/aaif/wg-observability-and-traceability/issues/45): enforcement/evidence split in the approval rules, scoped identity namespaces for joins and deduplication, usage aggregation levels, one-to-many effects, pinned OTel source revisions, and new fixture cases for each.
 - [Execution plan](https://github.com/aaif/wg-observability-and-traceability/pull/48) and its nine-task overview; task issues [#39](https://github.com/aaif/wg-observability-and-traceability/issues/39)–[#47](https://github.com/aaif/wg-observability-and-traceability/issues/47).
 - [OTel GenAI semantic conventions: spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/be23fcc250f7/docs/gen-ai/gen-ai-spans.md) (pinned at `be23fcc250f7`) and [agent spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/b06f7a2c840c/docs/gen-ai/gen-ai-agent-spans.md) (pinned at `b06f7a2c840c`), including the [turn-entry discussion](https://github.com/open-telemetry/semantic-conventions-genai/issues/356).
 - [AAIF Taxonomy & Landscape workstream](https://github.com/aaif/ws-taxonomy-landscape) and [taxonomy/trace-model crosswalk, issue #10](https://github.com/aaif/wg-observability-and-traceability/issues/10).
